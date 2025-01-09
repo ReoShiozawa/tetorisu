@@ -63,9 +63,9 @@ canvas {
     box-shadow: 0 2px 15px rgba(0,0,0,0.3);
     display: grid;
     grid-template-areas:
-        "hold rotate harddrop"
-        "left down right";
-    grid-template-columns: repeat(3, 65px); /* グリッドサイズを固定 */
+        "hold rotate harddrop pause"
+        "left down right none";
+    grid-template-columns: repeat(4, 65px); /* グリッドサイズを固定 */
     gap: 12px;
     z-index: 1000; /* 重なり順を制御 */
 }
@@ -95,6 +95,11 @@ canvas {
 #btn-harddrop { 
     grid-area: harddrop;
     font-size: 28px;  /* ハードドロップアイコンを少し大きく */
+}
+
+#btn-pause { 
+    grid-area: pause;
+    font-size: 24px;
 }
 
 .instructions {

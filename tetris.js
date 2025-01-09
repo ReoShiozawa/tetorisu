@@ -40,6 +40,16 @@ let canHold = true;
 let dropCounter = 0;
 let lastTime = 0;
 let score = 0;
+let level = 1;
+let lines = 0;
+let isPaused = false;
+let buttonStates = {
+    'btn-left': false,
+    'btn-right': false,
+    'btn-down': false
+}; // ボタンの状態を追跡
+let repeatDelay = 150; // ボタン長押し時の繰り返し間隔（ミリ秒）
+let lastMoveTime = {}; // 各ボタンの最終処理時刻
 
 function createBoard() {
     return Array(ROWS).fill().map(() => Array(COLS).fill(0));
@@ -61,7 +71,8 @@ function getRandomPiece() {
         matrix: TETROMINOS[tetromino],
         color: COLORS[tetromino],
         type: tetromino,
-        rotation: 0  // 回転状態を追加
+        rotation: 0,  // 回転状態を追加
+        lastMove: null  // 最後の操作を記録するプロパティを追加
     };
 }
 
@@ -73,6 +84,10 @@ function draw() {
     drawPiece();
     drawNext();
     drawHold();
+    
+    if (isPaused) {
+        drawPauseScreen();
+    }
 }
 
 function drawBoard() {
@@ -170,6 +185,7 @@ function moveDown() {
     piece.pos.y++;
     if (collision()) {
         piece.pos.y--;
+        piece.lastMove = 'drop'; // 最後の操作を記録
         merge();
         if (isGameOver()) {
             alert('Game Over! Score: ' + score);
@@ -241,6 +257,7 @@ function rotate() {
         piece.pos.y = originalState.pos.y - offsetY;
         
         if (!collision()) {
+            piece.lastMove = 'rotation'; // 最後の操作を記録
             return; // 回転成功
         }
     }
@@ -269,10 +286,25 @@ function clearLines() {
         board.unshift(Array(COLS).fill(0));
     }
     
-    // スコア加算（消した行数に応じて）
+    // ライン数を更新
+    lines += linesToRemove.length;
+    
+    // レベルアップの処理（10ライン消すごとにレベルアップ）
+    level = Math.floor(lines / 10) + 1;
+    
+    // スコア加算（レベルに応じてボーナス）
     const points = [0, 100, 300, 500, 800]; // 1行、2行、3行、4行のスコア
-    score += points[linesToRemove.length] || 0;
-    document.getElementById('score').textContent = score;
+    const tSpinPoints = [0, 800, 1200, 1600, 2000]; // Tスピンのスコア
+
+    if (isTSpin()) {
+        score += tSpinPoints[linesToRemove.length] * level || 0;
+        showTSpinMessage();
+    } else {
+        score += points[linesToRemove.length] * level || 0;
+    }
+    
+    // UI更新
+    updateUI();
 }
 
 function getNextPiece() {
@@ -331,13 +363,15 @@ function initGame() {
     
     // その他の状態をリセット
     score = 0;
+    level = 1;
+    lines = 0;
     holdPiece = null;
     canHold = true;
     dropCounter = 0;
     lastTime = 0;
     
     // UIの更新
-    document.getElementById('score').textContent = '0';
+    updateUI();
 }
 
 // モバイルコントロール用の関数を修正
@@ -349,18 +383,44 @@ function initMobileControls() {
         'btn-rotate': () => rotate(),
         'btn-hold': () => hold(),
         'btn-harddrop': () => hardDrop(),
+        'btn-pause': () => togglePause(), // ポーズボタンの制御を追加
     };
 
     Object.entries(controls).forEach(([id, handler]) => {
         const button = document.getElementById(id);
         if (button) {
-            button.addEventListener('mousedown', handler);
+            // マウス/タッチ開始時
+            button.addEventListener('mousedown', () => startButtonPress(id, handler));
             button.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                handler();
+                startButtonPress(id, handler);
             });
+
+            // マウス/タッチ終了時
+            button.addEventListener('mouseup', () => stopButtonPress(id));
+            button.addEventListener('mouseleave', () => stopButtonPress(id));
+            button.addEventListener('touchend', () => stopButtonPress(id));
+            button.addEventListener('touchcancel', () => stopButtonPress(id));
         }
     });
+}
+
+// ボタン押下開始時の処理を追加
+function startButtonPress(id, handler) {
+    if (id === 'btn-left' || id === 'btn-right' || id === 'btn-down') {
+        buttonStates[id] = true;
+        lastMoveTime[id] = 0; // 初回は即座に実行するため0に設定
+        handler(); // 初回の実行
+    } else {
+        handler(); // 長押し非対応のボタンは1回だけ実行
+    }
+}
+
+// ボタン押下終了時の処理を追加
+function stopButtonPress(id) {
+    if (buttonStates.hasOwnProperty(id)) {
+        buttonStates[id] = false;
+    }
 }
 
 // ハードドロップ機能を追加
@@ -379,6 +439,10 @@ window.addEventListener('load', () => {
     
     // キーボードイベントの設定
     document.addEventListener('keydown', event => {
+        if (isPaused && event.key !== 'p' && event.key !== 'P') {
+            return;  // ポーズ中は他のキー入力を無視
+        }
+        
         switch (event.key) {
             case 'ArrowLeft':
                 moveHorizontally(-1);
@@ -399,6 +463,10 @@ window.addEventListener('load', () => {
             case ' ': // スペースキー
                 hardDrop();
                 break;
+            case 'p':
+            case 'P':
+                togglePause();
+                break;
         }
     });
 
@@ -409,11 +477,37 @@ window.addEventListener('load', () => {
 
 // メインのupdateループを修正
 function update(time = 0) {
+    if (isPaused) {
+        draw();
+        requestAnimationFrame(update);
+        return;
+    }
+
     const deltaTime = time - lastTime;
     lastTime = time;
     dropCounter += deltaTime;
     
-    if (dropCounter > 1000) {
+    // ボタン長押し処理を追加
+    Object.entries(buttonStates).forEach(([id, isPressed]) => {
+        if (isPressed && time - (lastMoveTime[id] || 0) > repeatDelay) {
+            switch(id) {
+                case 'btn-left':
+                    moveHorizontally(-1);
+                    break;
+                case 'btn-right':
+                    moveHorizontally(1);
+                    break;
+                case 'btn-down':
+                    moveDown();
+                    break;
+            }
+            lastMoveTime[id] = time;
+        }
+    });
+
+    const dropInterval = Math.max(1000 - (level - 1) * 150, 50); // 最小50msに変更、減少率を150msに増加
+    
+    if (dropCounter > dropInterval) {
         moveDown();
         dropCounter = 0;
     }
@@ -448,9 +542,11 @@ function drawGhost() {
             if (value) {
                 // 元の色を取得してRGBA形式に変換
                 const color = ghost.color;
+                // T型ミノの場合は透明度を0.7に、それ以外は0.3のまま
+                const opacity = piece.type === 'T' ? 0.7 : 0.3;
                 context.fillStyle = color.startsWith('rgb') ? 
-                    color.replace(')', ', 0.3)').replace('rgb', 'rgba') : 
-                    `rgba(${colorToRGB(color).join(',')}, 0.3)`;
+                    color.replace(')', `, ${opacity})`).replace('rgb', 'rgba') : 
+                    `rgba(${colorToRGB(color).join(',')}, ${opacity})`;
                 
                 context.fillRect(
                     (ghost.pos.x + x) * BLOCK_SIZE,
@@ -475,4 +571,73 @@ function colorToRGB(color) {
         'red': [255, 0, 0]
     };
     return colors[color] || [128, 128, 128]; // デフォルトはグレー
+}
+
+// UI更新関数を追加
+function updateUI() {
+    document.getElementById('score').textContent = score;
+    document.getElementById('lines').textContent = lines;
+    document.getElementById('level').textContent = level;
+}
+
+// ポーズ画面描画関数を追加
+function drawPauseScreen() {
+    context.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    
+    context.fillStyle = 'white';
+    context.font = '20px Arial';
+    context.textAlign = 'center';
+    context.fillText('PAUSED', canvas.width / 2, canvas.height / 2);
+    context.font = '16px Arial';
+    context.fillText('Press P to resume', canvas.width / 2, canvas.height / 2 + 30);
+}
+
+// togglePause関数を追加
+function togglePause() {
+    isPaused = !isPaused;
+    if (!isPaused) {
+        lastTime = performance.now();
+    }
+}
+
+// Tスピン判定用の関数を追加
+function isTSpin() {
+    if (piece.type !== 'T') return false;
+
+    // コーナーチェックポイントを定義
+    const corners = [
+        {x: 0, y: 0},
+        {x: 2, y: 0},
+        {x: 0, y: 2},
+        {x: 2, y: 2}
+    ];
+
+    // 埋まっているコーナーの数をカウント
+    let filledCorners = 0;
+    corners.forEach(corner => {
+        const worldX = piece.pos.x + corner.x;
+        const worldY = piece.pos.y + corner.y;
+        if (worldY >= 0 && worldY < ROWS && worldX >= 0 && worldX < COLS) {
+            if (board[worldY][worldX]) filledCorners++;
+        } else {
+            filledCorners++; // 壁もブロックとして扱う
+        }
+    });
+
+    // 最後の操作が回転で、3つ以上のコーナーが埋まっている場合はTスピン
+    return filledCorners >= 3;
+}
+
+// Tスピン成功メッセージを表示する関数を追加
+function showTSpinMessage() {
+    context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    context.font = 'bold 20px Arial';
+    context.textAlign = 'center';
+    context.fillText('T-SPIN!', canvas.width / 2, canvas.height / 2);
+    
+    // メッセージを一定時間後に消す
+    setTimeout(() => {
+        draw();
+    }, 1000);
 }
