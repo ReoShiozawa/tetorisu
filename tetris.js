@@ -44,11 +44,12 @@ let level = 1;
 let lines = 0;
 let isPaused = false;
 let buttonStates = {
-    'btn-left': false,
-    'btn-right': false,
-    'btn-down': false
+    'btn-left': { pressed: false, initialDelay: true },
+    'btn-right': { pressed: false, initialDelay: true },
+    'btn-down': { pressed: false, initialDelay: true }
 }; // ボタンの状態を追跡
-let repeatDelay = 150; // ボタン長押し時の繰り返し間隔（ミリ秒）
+let initialRepeatDelay = 200; // 長押し開始時の遅延（ミリ秒）
+let repeatDelay = 50; // 長押し中の繰り返し間隔（ミリ秒）
 let lastMoveTime = {}; // 各ボタンの最終処理時刻
 
 function createBoard() {
@@ -405,21 +406,23 @@ function initMobileControls() {
     });
 }
 
-// ボタン押下開始時の処理を追加
+// ボタン押下開始時の処理を修正
 function startButtonPress(id, handler) {
     if (id === 'btn-left' || id === 'btn-right' || id === 'btn-down') {
-        buttonStates[id] = true;
-        lastMoveTime[id] = 0; // 初回は即座に実行するため0に設定
+        buttonStates[id].pressed = true;
+        buttonStates[id].initialDelay = true;
+        lastMoveTime[id] = performance.now();
         handler(); // 初回の実行
     } else {
         handler(); // 長押し非対応のボタンは1回だけ実行
     }
 }
 
-// ボタン押下終了時の処理を追加
+// ボタン押下終了時の処理を修正
 function stopButtonPress(id) {
     if (buttonStates.hasOwnProperty(id)) {
-        buttonStates[id] = false;
+        buttonStates[id].pressed = false;
+        buttonStates[id].initialDelay = true;
     }
 }
 
@@ -487,21 +490,25 @@ function update(time = 0) {
     lastTime = time;
     dropCounter += deltaTime;
     
-    // ボタン長押し処理を追加
-    Object.entries(buttonStates).forEach(([id, isPressed]) => {
-        if (isPressed && time - (lastMoveTime[id] || 0) > repeatDelay) {
-            switch(id) {
-                case 'btn-left':
-                    moveHorizontally(-1);
-                    break;
-                case 'btn-right':
-                    moveHorizontally(1);
-                    break;
-                case 'btn-down':
-                    moveDown();
-                    break;
+    // ボタン長押し処理を改善
+    Object.entries(buttonStates).forEach(([id, state]) => {
+        if (state.pressed) {
+            const currentDelay = state.initialDelay ? initialRepeatDelay : repeatDelay;
+            if (time - lastMoveTime[id] > currentDelay) {
+                switch(id) {
+                    case 'btn-left':
+                        moveHorizontally(-1);
+                        break;
+                    case 'btn-right':
+                        moveHorizontally(1);
+                        break;
+                    case 'btn-down':
+                        moveDown();
+                        break;
+                }
+                lastMoveTime[id] = time;
+                state.initialDelay = false;
             }
-            lastMoveTime[id] = time;
         }
     });
 
