@@ -30,7 +30,7 @@ const nextContext = nextCanvas.getContext('2d');
 const holdCanvas = document.getElementById('hold');
 const holdContext = holdCanvas.getContext('2d');
 
-// グローバル変数の初期化を修正
+// グローバル変数の修正
 let bag = [];
 let board = null;
 let piece = null;
@@ -44,13 +44,19 @@ let level = 1;
 let lines = 0;
 let isPaused = false;
 let buttonStates = {
-    'btn-left': { pressed: false, initialDelay: true },
-    'btn-right': { pressed: false, initialDelay: true },
-    'btn-down': { pressed: false, initialDelay: true }
-}; // ボタンの状態を追跡
-let initialRepeatDelay = 200; // 長押し開始時の遅延（ミリ秒）
-let repeatDelay = 50; // 長押し中の繰り返し間隔（ミリ秒）
-let lastMoveTime = {}; // 各ボタンの最終処理時刻
+    'btn-left': { pressed: false, initialDelay: true, lastRepeatTime: 0 },
+    'btn-right': { pressed: false, initialDelay: true, lastRepeatTime: 0 },
+    'btn-down': { pressed: false, initialDelay: true, lastRepeatTime: 0 }
+};
+let initialRepeatDelay = 200;  // 長押し開始時の遅延
+let repeatDelay = 75;          // 通常の繰り返し間隔
+let fastRepeatDelay = 30;      // 高速繰り返し間隔（長押し3回以降）
+let repeatCount = {            // 各ボタンの連続押下回数
+    'btn-left': 0,
+    'btn-right': 0,
+    'btn-down': 0
+};
+let lastMoveTime = {};
 
 function createBoard() {
     return Array(ROWS).fill().map(() => Array(COLS).fill(0));
@@ -411,7 +417,8 @@ function startButtonPress(id, handler) {
     if (id === 'btn-left' || id === 'btn-right' || id === 'btn-down') {
         buttonStates[id].pressed = true;
         buttonStates[id].initialDelay = true;
-        lastMoveTime[id] = performance.now();
+        buttonStates[id].lastRepeatTime = performance.now();
+        repeatCount[id] = 0;
         handler(); // 初回の実行
     } else {
         handler(); // 長押し非対応のボタンは1回だけ実行
@@ -423,6 +430,7 @@ function stopButtonPress(id) {
     if (buttonStates.hasOwnProperty(id)) {
         buttonStates[id].pressed = false;
         buttonStates[id].initialDelay = true;
+        repeatCount[id] = 0;
     }
 }
 
@@ -446,30 +454,52 @@ window.addEventListener('load', () => {
             return;  // ポーズ中は他のキー入力を無視
         }
         
+        let buttonId = null;
         switch (event.key) {
             case 'ArrowLeft':
-                moveHorizontally(-1);
+                buttonId = 'btn-left';
                 break;
             case 'ArrowRight':
-                moveHorizontally(1);
+                buttonId = 'btn-right';
                 break;
             case 'ArrowDown':
-                moveDown();
+                buttonId = 'btn-down';
                 break;
-            case 'ArrowUp':
-                rotate();
+        }
+
+        if (buttonId && !event.repeat) {
+            startButtonPress(buttonId, () => {
+                switch(buttonId) {
+                    case 'btn-left':
+                        moveHorizontally(-1);
+                        break;
+                    case 'btn-right':
+                        moveHorizontally(1);
+                        break;
+                    case 'btn-down':
+                        moveDown();
+                        break;
+                }
+            });
+        }
+    });
+
+    document.addEventListener('keyup', event => {
+        let buttonId = null;
+        switch (event.key) {
+            case 'ArrowLeft':
+                buttonId = 'btn-left';
                 break;
-            case 'c':
-            case 'C':
-                hold();
+            case 'ArrowRight':
+                buttonId = 'btn-right';
                 break;
-            case ' ': // スペースキー
-                hardDrop();
+            case 'ArrowDown':
+                buttonId = 'btn-down';
                 break;
-            case 'p':
-            case 'P':
-                togglePause();
-                break;
+        }
+
+        if (buttonId) {
+            stopButtonPress(buttonId);
         }
     });
 
@@ -493,8 +523,15 @@ function update(time = 0) {
     // ボタン長押し処理を改善
     Object.entries(buttonStates).forEach(([id, state]) => {
         if (state.pressed) {
-            const currentDelay = state.initialDelay ? initialRepeatDelay : repeatDelay;
-            if (time - lastMoveTime[id] > currentDelay) {
+            let currentDelay;
+            if (state.initialDelay) {
+                currentDelay = initialRepeatDelay;
+            } else {
+                // 連続押下回数に応じて遅延を調整
+                currentDelay = repeatCount[id] >= 3 ? fastRepeatDelay : repeatDelay;
+            }
+
+            if (time - state.lastRepeatTime > currentDelay) {
                 switch(id) {
                     case 'btn-left':
                         moveHorizontally(-1);
@@ -506,8 +543,9 @@ function update(time = 0) {
                         moveDown();
                         break;
                 }
-                lastMoveTime[id] = time;
+                state.lastRepeatTime = time;
                 state.initialDelay = false;
+                repeatCount[id]++;
             }
         }
     });
